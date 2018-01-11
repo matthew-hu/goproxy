@@ -1,0 +1,7 @@
+.idea/
+.idea/*
+*.log
+*.exe
+*.out
+pkg/
+pkg/*
