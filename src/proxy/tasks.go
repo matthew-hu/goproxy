@@ -82,10 +82,10 @@ func takeActionBlackList(client net.Conn, url string) {
 }
 
 func writeResponseHeader(client net.Conn, url string, tmpl string) {
-	buf := bytes.NewBuffer(make([]byte, 4096))
+	var buf bytes.Buffer
 	if tmpl == "blacklist" {
 		if blackListTemplate != nil {
-			blackListTemplate.Execute(buf, url)
+			blackListTemplate.Execute(&buf, url)
 		}
 	}
 
@@ -99,7 +99,7 @@ func writeResponseHeader(client net.Conn, url string, tmpl string) {
 
 	client.Write([]byte(strings.Join(header, "")))
 	if buf.Len() > 0 {
-		client.Write(buf.Bytes())
+		buf.WriteTo(client)
 	}
 }
 
