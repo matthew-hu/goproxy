@@ -1,2 +1,4 @@
-*.7k7k.com
-www.4399.com
+domain    *.7k7k.com
+domain    www.4399.com
+domain    www.4399er.com
+url       www.4399.com/special/295.htm

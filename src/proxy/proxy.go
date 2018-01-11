@@ -3,51 +3,42 @@ package proxy
 import (
 	`net`
 	`log`
-	"os"
 	"bufio"
 	"regexp"
 	"strings"
 	"fmt"
 	"io"
-	"time"
 	"bytes"
 )
 
-var blackList = make(map[string]bool, 10)
+
 // used to counting handled connections
 var incoming = make(chan struct{}, 1000)
 var leaving = make(chan struct{}, 1000)
 
-// load black list
-func init() {
-	f, err := os.Open("./blacklist.txt")
-	if err != nil {
-		log.Println(err)
-		return
-	}
-	defer f.Close()
-	input := bufio.NewScanner(f)
-	for input.Scan() {
-		log.Println(input.Text())
-		blackList[input.Text()] = true
-	}
-}
 
 type Proxy struct {
 	port string
 	upstream string
+	reverse string
 	enableBlackList bool
+	enableStatistic bool
 }
 
 func (p *Proxy) Start() {
 	if p.port == "" {
 		p.port = "8080"
 	}
+
 	listener, err := net.Listen("tcp", "localhost:" + p.port)
 	if err != nil {
 		log.Fatal(err)
 	}
-	go connectionStatus()
+
+	if p.enableStatistic {
+		go p.connectionStatus()
+	}
+
 	for {
 		conn, err := listener.Accept()
 		if err != nil {
@@ -59,30 +50,22 @@ func (p *Proxy) Start() {
 	}
 }
 
-func connectionStatus() {
-	var total, active, closed int64
-	for {
-		select {
-		case <- incoming:
-			total += 1
-			active += 1
-		case <- leaving:
-			active -= 1
-			closed += 1
-		default:
-			log.Printf("Total served connections: %d, active conntions: %d, closed connection: %d", total,
-				active, closed)
-			time.Sleep(5 * time.Second)
-		}
-	}
+func (p *Proxy) EnableBlackList() {
+	p.enableBlackList = true
 }
 
 func (p *Proxy) handleConn(conn net.Conn) {
-	if p.upstream != "" {
-		go handleConnUpstreamMode(conn)
-	} else {
-		go p.handleConnPlain(conn)
+	if p.reverse != "" {
+		// reverse proxy mode
+		return
 	}
+
+	if p.upstream != "" {
+		go p.handleConnUpstreamMode(conn)
+		return
+	}
+
+	go p.handleConnPlain(conn)
 }
 
 var proxyString = "HTTP/1.1 200 Connection established\r\nProxy-agent: SimpleProxy\r\n\r\n"
@@ -101,22 +84,40 @@ func (p *Proxy) handleConnPlain(client net.Conn) {
 		return
 	}
 
-	server, proto, err := createServerConn(firstLine)
+	target, proto, domain, url, err := parseServer(firstLine)
 	if err != nil {
+		log.Println(err)
+		return
+	}
+
+	if p.enableBlackList {
+		if scanTaskBlackListMatch(domain, url) {
+			discardRemainHeaders(readerClient)
+			takeActionBlackList(client, proto + "://" + url)
+			return
+		}
+	}
+
+	server, err := createServerConn(target)
+	if err != nil {
+		log.Println(err)
 		return
 	}
 	defer server.Close()
 
 	if proto == "https" {
 		// read the remain headers of CONNECT request
-		for {
-			s, _ := readerClient.ReadString('\n')
-			if index := strings.Index(s, "\r\n"); index == 0 {
-				break
-			}
-		}
+		//for {
+		//	s, _ := readerClient.ReadString('\n')
+		//	if index := strings.Index(s, "\r\n"); index == 0 {
+		//		break
+		//	}
+		//}
+		discardRemainHeaders(readerClient)
+		// send 200 connection established
 		io.WriteString(client, proxyString)
 	} else {
+		// send all request lines to server
 		io.WriteString(server, firstLine)
 		for {
 			s, _ := readerClient.ReadString('\n')
@@ -150,7 +151,8 @@ var methods = map[string]bool{
 	"CONNECT": true,
 }
 
-func parseServer(header string) (target, proto string, err error) {
+// get target host, proto, domain, url from client request
+func parseServer(header string) (target, proto, domain, url string, err error) {
 	fields := headerSplit.Split(header, 5)
 	if len(fields) != 3 || !methods[strings.ToUpper(fields[0])] {
 		err = fmt.Errorf("parseServer: not http(s) protocol: %s", header)
@@ -158,29 +160,24 @@ func parseServer(header string) (target, proto string, err error) {
 	}
 
 	if strings.ToUpper(fields[0]) == "CONNECT" {
-		return fields[1], "https", nil
+		target = fields[1]
+		proto = "https"
+		domain = strings.Split(target, ":")[0]
+		url = domain
 	} else {
 		target = strings.Split(strings.Split(fields[1], "://")[1], "/")[0]
+		proto = "http"
+		url = strings.Split(fields[1], "://")[1]
 		if !strings.Contains(target, ":") {
 			target += ":80"
 		}
-		proto = "http"
+		domain = strings.Split(target, ":")[0]
 	}
 	return
 }
 
-func createServerConn(statusLine string) (server net.Conn, proto string, err error) {
-	target, proto, err := parseServer(statusLine)
-	if err != nil {
-		log.Println(err)
-		return nil, proto, err
-	}
-	//log.Println(target, proto)
+func createServerConn(target string) (server net.Conn, err error) {
 	server, err = net.Dial("tcp", target)
-	if err != nil {
-		log.Println(err)
-		return nil, proto, err
-	}
 	return
 }
 
@@ -204,4 +201,17 @@ func handleMoreRequest(rdClient io.Reader, wrServer io.Writer, done chan<- struc
 		wrServer.Write(buf[:n])
 	}
 	close(done)
+}
+
+func discardRemainHeaders(rd io.Reader) {
+	reader := rd.(*bufio.Reader)
+	for {
+		s, err := reader.ReadString('\n')
+		if err != nil {
+			return
+		}
+		if strings.Index(s, "\r\n") == 0 {
+			break
+		}
+	}
 }

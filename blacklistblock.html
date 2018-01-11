@@ -1,0 +1,81 @@
+<html>
+<head>
+    <style type="text/css">
+        #notificationContentBg {
+            background-color: #FEFEFE;
+        }
+        .notification-container .company {
+            padding: 12px 10px 10px 20px;
+            font-size: 14px;
+            text-align: left;
+        }
+        .notification-container .title {
+            text-align: center;
+            font-size: 20px;
+            padding: 14px 20px;
+            font-weight: 500;
+            color: #FFFFFF;
+            background-color: #c00;
+        }
+        .notification-container p {
+            text-align: left;
+            line-height: 20px;
+            font-size:13px;
+        }
+        .notification-container .notif {
+            padding: 4px 20px 10px 20px;
+        }
+        .notification-container .footer {
+            font-size: 10px;
+            color: #666;
+            text-align: right;
+            line-height: 20px;
+            padding: 8px 0px;
+        }
+        .notification-container {
+            width: 100%;
+            max-width: 600px;
+            margin: 10px auto 0;
+            font-family:Arial, Helvetica, sans-serif;
+            font-size:13px;
+        }
+        .notification-container .content {
+            position: relative;
+            min-height: 100px;
+            box-shadow: 2px 2px 2px -2px #C2C2C2;
+            border: 1px solid #D8D8D8;
+            margin: 0 auto;
+            background-color: #FEFEFE;
+        }
+        .notification-container .details div{
+            padding-bottom: 8px;
+            font-size: 12px;
+        }
+        .notification-container .highlight {
+            color: #c00;
+        }
+        .notification-container img{
+            vertical-align: middle;
+            padding-right: 5px;
+        }
+    </style>
+</head>
+<body>
+<div class="notification-container" style="margin: 10px auto 0;font-family:Arial, Helvetica, sans-serif;font-size:13px;">
+    <div class="content" style="position: relative;box-shadow: 2px 2px 2px -2px #C2C2C2;border: 1px solid #D8D8D8;margin: 0 auto;background-color: #FEFEFE;">
+        <div style="background-color: #FEFEFE;">
+            <div style="text-align: center;font-size: 20px;padding: 14px 20px;font-weight: 500;color: #FFFFFF;background-color: #c00;" i18n="blacklist_msg.block">Blocked URL List</div>
+            <div style="padding: 4px 20px 10px 20px;">
+                <p i18n="common.tip1">Access to this website was blocked because the URL is in the <span style="color: #c00;">Blocked URL list</span>.</p>
+                <div style="padding-bottom: 8px;font-size: 12px;">
+                    <div><strong i18n="common.event_detail">Event Details:</strong></div>
+                    <div i18n="common.url" style="word-wrap:break-word;">URL: {{.}}</div>
+                </div>
+                <p i18n="common.message">If you believe this website was blocked in error, please contact your IT staff to resolve this issue.</p>
+            </div><!--notif-->
+        </div><!--contentBg-->
+    </div><!--content-->
+    <div style="font-size: 10px;color: #666;text-align: right;line-height: 20px;padding: 8px 0px;" i18n="footer.footer">Simple Go Proxy</div>
+</div><!--container-->
+</body>
+</html>

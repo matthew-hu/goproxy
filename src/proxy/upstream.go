@@ -4,6 +4,6 @@ import (
 	`net`
 )
 
-func handleConnUpstreamMode(client net.Conn) {
+func (p *Proxy) handleConnUpstreamMode(client net.Conn) {
 
 }
