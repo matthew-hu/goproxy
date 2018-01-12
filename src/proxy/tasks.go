@@ -5,12 +5,12 @@ import (
 	"log"
 	"bufio"
 	"regexp"
-	"net"
 	"strings"
 	"html/template"
 	"io/ioutil"
 	"bytes"
 	"fmt"
+	"io"
 )
 
 var blackList = make(map[*regexp.Regexp]string, 10)
@@ -77,15 +77,15 @@ func scanTaskBlackListMatch(domain, url string) bool {
 	return false
 }
 
-func takeActionBlackList(client net.Conn, url string) {
+func takeActionBlackList(client io.Writer, url string) {
 	writeResponseHeader(client, url, "blacklist")
 }
 
-func writeResponseHeader(client net.Conn, url string, tmpl string) {
-	var buf bytes.Buffer
+func writeResponseHeader(client io.Writer, url string, tmpl string) {
+	buf := bytes.NewBuffer(make([]byte, 0, 4096))
 	if tmpl == "blacklist" {
 		if blackListTemplate != nil {
-			blackListTemplate.Execute(&buf, url)
+			blackListTemplate.Execute(buf, url)
 		}
 	}
 

@@ -1,0 +1,7 @@
+1. 添加认证支持，一个携程管理内存map的查询和更新（可有过期机制），不存在的开携程去去数据库sqlite 查询，放回结果给客户和查询携程并更新
+2. 添加WRS
+3. 处理punycode  --- done --- 浏览器自动转
+4. Access log
+5. XFF
+6. UI Config
+7. 优化 html/template 模板的使用，优化页面长度的计算，模板的Execute 是否支持并发

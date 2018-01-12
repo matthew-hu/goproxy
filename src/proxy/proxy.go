@@ -106,13 +106,6 @@ func (p *Proxy) handleConnPlain(client net.Conn) {
 	defer server.Close()
 
 	if proto == "https" {
-		// read the remain headers of CONNECT request
-		//for {
-		//	s, _ := readerClient.ReadString('\n')
-		//	if index := strings.Index(s, "\r\n"); index == 0 {
-		//		break
-		//	}
-		//}
 		discardRemainHeaders(readerClient)
 		// send 200 connection established
 		io.WriteString(client, proxyString)
@@ -130,7 +123,9 @@ func (p *Proxy) handleConnPlain(client net.Conn) {
 
 	// used by client to signal all requests have been done
 	done := make(chan struct{})
-	go handleMoreRequest(readerClient, server, done)
+	go p.handleMoreRequest(proto, readerClient, client, server, done)
+
+	// to-do  add black list support for handleMoreRequest
 
 	// deliver server data to client
 	io.Copy(client, server)
@@ -181,36 +176,77 @@ func createServerConn(target string) (server net.Conn, err error) {
 	return
 }
 
-func handleMoreRequest(rdClient io.Reader, wrServer io.Writer, done chan<- struct{}) {
-	buf := make([]byte, 4096)
-	reqIdentify := []byte(" HTTP/1.")
-	for {
-		n, err := rdClient.Read(buf)
-		if err != nil {
-			log.Printf("read more request from client meets error: %v", err)
-			if n > 0 {
-				// send last bytes
-				wrServer.Write(buf[:n])
-				log.Printf("last bytes of client request have been sent: %s", string(buf[:n]))
+func (p *Proxy) handleMoreRequest(proto string, rdClient *bufio.Reader, wrClient io.Writer, wrServer io.Writer, done chan<- struct{}) {
+	//this only works with http, as https is encrypt and can not see plain '\n'
+	if proto == "http" {
+		reqIdentify := []byte(" HTTP/1.")
+		for {
+			b, err := rdClient.ReadBytes('\n')
+			if err != nil {
+				log.Printf("read more request from client meets error: %v", err)
+				if len(b) > 0 {
+					// send last bytes
+					wrServer.Write(b)
+					log.Printf("last bytes of client request have been sent: %v", b)
+				}
+				break
 			}
-			break
+			if bytes.Index(b, reqIdentify) != -1 {
+				log.Printf("client issues another request: \n%s\n", string(b))
+				if p.enableBlackList {
+					_, _, domain, url, err := parseServer(string(b))
+					if err != nil {
+						log.Println(err)
+						break
+					}
+					log.Printf("handleMoreRequest: checking blacklist match for: %s\n", url)
+					if scanTaskBlackListMatch(domain, url) {
+						log.Printf("matched blacklist item: %s", url)
+						discardRemainHeaders(rdClient)
+						takeActionBlackList(wrClient, proto + "://" + url)
+						break
+					}
+				}
+			}
+			wrServer.Write(b)
 		}
-		if bytes.Index(buf[:n], reqIdentify) != -1 {
-			log.Printf("client issues another request: \n%s", string(buf[:n]))
-		}
-		wrServer.Write(buf[:n])
+	} else {
+		rdClient.WriteTo(wrServer)
 	}
+
+	// this work with both http/https
+	//buf := make([]byte, 4096)
+	//reqIdentify := []byte(" HTTP/1.")
+	//for {
+	//	n, err := rdClient.Read(buf)
+	//	if err != nil {
+	//		log.Printf("read more request from client meets error: %v", err)
+	//		if n > 0 {
+	//			// send last bytes
+	//			wrServer.Write(buf[:n])
+	//			log.Printf("last bytes of client request have been sent: %s", string(buf[:n]))
+	//		}
+	//		break
+	//	}
+	//	if bytes.Index(buf[:n], reqIdentify) != -1 {
+	//		// new http request
+	//		log.Printf("client issues another request: \n%s", string(buf[:n]))
+	//	}
+	//	wrServer.Write(buf[:n])
+	//}
+
+	// client has finished all request in this connection
 	close(done)
 }
 
-func discardRemainHeaders(rd io.Reader) {
-	reader := rd.(*bufio.Reader)
+func discardRemainHeaders(rd *bufio.Reader) {
+	identify := []byte("\r\n")
 	for {
-		s, err := reader.ReadString('\n')
+		s, err := rd.ReadBytes('\n')
 		if err != nil {
 			return
 		}
-		if strings.Index(s, "\r\n") == 0 {
+		if bytes.Index(s, identify) == 0 {
 			break
 		}
 	}
