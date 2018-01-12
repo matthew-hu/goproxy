@@ -13,5 +13,7 @@ func main() {
 	prx := new(proxy.Proxy)
 	prx.EnableStatistic()
 	prx.EnableBlackList()
+	//prx.SetUpstreamProxy("10.202.241.54:8080")
+
 	prx.Start()
 }

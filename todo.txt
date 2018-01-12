@@ -5,3 +5,7 @@
 5. XFF
 6. UI Config
 7. 优化 html/template 模板的使用，优化页面长度的计算，模板的Execute 是否支持并发
+8. Add idle timeout support for keep alive link to reduce resource usage
+
+9. 1.15 第二次 golang
+10. 看 net 等标准库

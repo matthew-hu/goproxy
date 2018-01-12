@@ -57,15 +57,17 @@ func (p *Proxy) EnableBlackList() {
 func (p *Proxy) handleConn(conn net.Conn) {
 	if p.reverse != "" {
 		// reverse proxy mode
+		p.handleConnReverseMode(conn)
 		return
 	}
 
 	if p.upstream != "" {
-		go p.handleConnUpstreamMode(conn)
+		// upstream proxy mode
+		p.handleConnUpstreamMode(conn)
 		return
 	}
 
-	go p.handleConnPlain(conn)
+	p.handleConnPlain(conn)
 }
 
 var proxyString = "HTTP/1.1 200 Connection established\r\nProxy-agent: SimpleProxy\r\n\r\n"
@@ -98,7 +100,8 @@ func (p *Proxy) handleConnPlain(client net.Conn) {
 		}
 	}
 
-	server, err := createServerConn(target)
+	// server, err := createServerConn(target)
+	server, err := net.Dial("tcp", target)
 	if err != nil {
 		log.Println(err)
 		return
