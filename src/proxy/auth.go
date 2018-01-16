@@ -36,7 +36,7 @@ var authPage []byte
 
 func init() {
 	// load auth page
-	f, err := os.Open("./login.html")
+	f, err := os.Open("./pages/login.html")
 	if err != nil {
 		log.Fatalf("failed to load page login.html: %v", err)
 	}
@@ -98,6 +98,7 @@ func authDaemon() {
 				log.Printf("authDaemon: parse form err: %v", err)
 			}
 
+			// 这里有个问题，就是同时多个认证来的时候，OriginalURL 这个 cookie 被更新成最后来的认证请求，用户名密码被post过来后，放问成了非原始的页面
 			if _, ok := r.Form["forward"]; ok {
 				cookie := &http.Cookie{
 					Name:   "OriginalURL",
@@ -138,7 +139,7 @@ func authDaemon() {
 	}
 
 	http.HandleFunc("/auth", handler)
-	log.Fatal(http.ListenAndServeTLS(":443", "server-cert.pem", "server-KEY.pem", nil))
+	log.Fatal(http.ListenAndServeTLS(":443", "./certificate/server-cert.pem", "./certificate/server-KEY.pem", nil))
 
 }
 

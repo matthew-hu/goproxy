@@ -4,11 +4,10 @@ import (
 	`net`
 	`log`
 	"bufio"
-	"regexp"
 	"strings"
-	"fmt"
 	"io"
-	"bytes"
+	"time"
+	"io/ioutil"
 )
 
 
@@ -94,7 +93,7 @@ func (p *Proxy) EnableAuth() {
 	p.enableAuth = true
 }
 
-var proxyString = "HTTP/1.1 200 Connection established\r\nProxy-agent: GoSimpleProxy\r\n\r\n"
+var proxyString = "HTTP/1.1 200 Connection established\r\nProxy-agent: SimpleGoProxy\r\n\r\n"
 
 func (p *Proxy) handleConnPlain(client net.Conn) {
 	defer func() {
@@ -102,186 +101,149 @@ func (p *Proxy) handleConnPlain(client net.Conn) {
 		leaving <- struct{}{}
 	}()
 
-	// read the first line of the client request to determine the destination server to connect
-	readerClient := bufio.NewReader(client)
-	firstLine, err := readerClient.ReadString('\n')
-	if err != nil {
-		log.Printf("read first line, get error: %v", err)
+	connections := make(map[string]net.Conn)
+	rd := bufio.NewReader(client)
+
+	r, err := parseRequestHeader(rd)
+	if err != nil && r == nil {
+		log.Println("handleConnPlain: parse first request fail")
 		return
 	}
 
-	target, proto, domain, url, err := parseServer(firstLine)
-	if err != nil {
-		log.Println(err)
-		return
-	}
+	log.Println("handle first request: ", *r)
+
+	target, proto, domain, url := r.target, r.proto, r.domain, r.url
+	log.Println("first coming request:", client.RemoteAddr(), target, proto, url)
+
 
 	if p.enableAuth {
 		// bypass access to auth daemon to avoid auth loop
 		if proto == "http" && !queryCache(strings.Split(client.RemoteAddr().String(), ":")[0]) {
-			discardRemainHeaders(readerClient)
+			if r.contentLength > 0 {
+				log.Println("content-length", r.contentLength)
+				discardRemainHeaders(r.rd, r.contentLength)
+				r.contentLength = 0
+			}
+			log.Printf("redirect %s to auth", url)
 			authRedirect(client, proto + "://" + url)
 		}
 	}
 
 	if p.enableBlackList {
+		log.Printf("checking blacklist match for first incoming request: %s----%d\n", r.requestLine, r.contentLength)
 		if scanTaskBlackListMatch(domain, url) {
-			discardRemainHeaders(readerClient)
+			if r.contentLength > 0 {
+				log.Println("content-length", r.contentLength)
+				discardRemainHeaders(r.rd, r.contentLength)
+				r.contentLength = 0
+			}
 			takeActionBlackList(client, proto + "://" + url)
 			return
 		}
 	}
 
-	// server, err := createServerConn(target)
 	server, err := net.Dial("tcp", target)
 	if err != nil {
 		log.Println(err)
 		return
 	}
-	defer server.Close()
+	connections[target] = server
+	//defer server.Close()
 
 	if proto == "https" {
-		discardRemainHeaders(readerClient)
 		// send 200 connection established
+		r.send(ioutil.Discard)
 		io.WriteString(client, proxyString)
 	} else {
 		// send all request lines to server
-		io.WriteString(server, firstLine)
-		for {
-			s, err := readerClient.ReadString('\n')
-			if err != nil {
-				log.Printf("http write string to server: %v", err)
-				break
-			}
-			io.WriteString(server, s)
-			if index := strings.Index(s, "\r\n"); index == 0 {
-				break
-			}
-		}
+		r.send(server)
 	}
+
+	// deliver server data to client
+	handleEachServer := func(target string, s net.Conn) {
+		defer s.Close()
+		io.Copy(client, s)
+		delete(connections, target)
+	}
+
+	go handleEachServer(target, server)
 
 	// used by client to signal all requests have been done
 	done := make(chan struct{})
-	go p.handleMoreRequest(proto, readerClient, client, server, done)
+	go p.handleMoreRequest(proto, rd, client, server, connections, done)
 
-	// to-do  add black list support for handleMoreRequest
-
-	// deliver server data to client
-	io.Copy(client, server)
 	<- done
-
-}
-
-// split client request line, such as: CONNECT www.baidu.com HTTP/1.1
-var headerSplit = regexp.MustCompile(` +`)
-var methods = map[string]bool{
-	"GET": true,
-	"POST": true,
-	"PUT": true,
-	"DELETE": true,
-	"HEAD": true,
-	"OPTIONS": true,
-	"TRACE": true,
-	"CONNECT": true,
-}
-
-// get target host, proto, domain, url from client request
-func parseServer(header string) (target, proto, domain, url string, err error) {
-	fields := headerSplit.Split(header, 5)
-	if len(fields) != 3 || !methods[strings.ToUpper(fields[0])] {
-		err = fmt.Errorf("parseServer: not http(s) protocol: %s", header)
-		return
+	for len(connections) > 0 {
+		time.Sleep(1 * time.Second)
 	}
-
-	if strings.ToUpper(fields[0]) == "CONNECT" {
-		target = fields[1]
-		proto = "https"
-		domain = strings.Split(target, ":")[0]
-		url = domain
-	} else {
-		target = strings.Split(strings.Split(fields[1], "://")[1], "/")[0]
-		proto = "http"
-		url = strings.Split(fields[1], "://")[1]
-		if !strings.Contains(target, ":") {
-			target += ":80"
-		}
-		domain = strings.Split(target, ":")[0]
-	}
-	return
+	log.Printf("close client connection: %v", client.RemoteAddr())
 }
 
-func (p *Proxy) handleMoreRequest(proto string, rdClient *bufio.Reader, wrClient io.Writer, wrServer io.Writer, done chan<- struct{}) {
+func (p *Proxy) handleMoreRequest(proto string, bufRdClient *bufio.Reader, currentClient net.Conn, currentServer net.Conn, connPool map[string]net.Conn, done chan<- struct{}) {
+	defer func(){close(done)}()
+
 	//this only works with http, as https is encrypt and can not see plain '\n'
+	var currentConn = currentServer
 	if proto == "http" {
-		reqIdentify := []byte(" HTTP/1.")
 		for {
-			b, err := rdClient.ReadBytes('\n')
-			if err != nil {
-				log.Printf("read more request from client meets error: %v", err)
-				if len(b) > 0 {
-					// send last bytes
-					wrServer.Write(b)
-					log.Printf("last bytes of client request have been sent: %v", b)
-				}
-				break
+			r, err := parseRequestHeader(bufRdClient)
+			if err != nil && r == nil {
+				log.Printf("handleMoreRequest parse more request fail, client: %v", currentClient.RemoteAddr())
+				return
 			}
-			if bytes.Index(b, reqIdentify) != -1 {
-				log.Printf("client issues another request: \n%s\n", string(b))
-				if p.enableBlackList {
-					_, _, domain, url, err := parseServer(string(b))
-					if err != nil {
-						log.Println(err)
-						break
+
+			log.Println("handle more request: ", currentClient.RemoteAddr(), r.target, r.url)
+			target, domain, url := r.target, r.domain, r.url
+
+			if p.enableBlackList {
+				log.Printf("handleMoreRequest: checking blacklist match for: %s\n", url)
+				if scanTaskBlackListMatch(domain, url) {
+					log.Printf("matched blacklist item: %s", url)
+					if r.contentLength > 0 {
+						discardRemainHeaders(bufRdClient, r.contentLength)
 					}
-					log.Printf("handleMoreRequest: checking blacklist match for: %s\n", url)
-					if scanTaskBlackListMatch(domain, url) {
-						log.Printf("matched blacklist item: %s", url)
-						discardRemainHeaders(rdClient)
-						takeActionBlackList(wrClient, proto + "://" + url)
-						break
-					}
+					takeActionBlackList(currentClient, proto + "://" + url)
+					return
 				}
 			}
-			wrServer.Write(b)
+
+			if _, ok := connPool[target]; !ok {
+				server, err := net.Dial("tcp", target)
+				if err != nil {
+					log.Printf("handleMoreRequests, create new server conn: %v", err)
+					return
+				}
+				log.Printf("handleMoreRequests, create new server conn: %s", target)
+				connPool[target] = server
+			}
+			// go handleEachConn
+			currentConn = connPool[target]
+
+			r.send(currentConn)
+
+			handleEachServer := func(target string, s net.Conn) {
+				defer s.Close()
+				io.Copy(currentClient, s)
+				delete(connPool, target)
+			}
+			go handleEachServer(target, currentConn)
 		}
+		log.Println("leaving handleMoreRequest inside loop")
+
 	} else {
-		rdClient.WriteTo(wrServer)
+		bufRdClient.WriteTo(currentServer)
 	}
 
-	// this work with both http/https
-	//buf := make([]byte, 4096)
-	//reqIdentify := []byte(" HTTP/1.")
-	//for {
-	//	n, err := rdClient.Read(buf)
-	//	if err != nil {
-	//		log.Printf("read more request from client meets error: %v", err)
-	//		if n > 0 {
-	//			// send last bytes
-	//			wrServer.Write(buf[:n])
-	//			log.Printf("last bytes of client request have been sent: %s", string(buf[:n]))
-	//		}
-	//		break
-	//	}
-	//	if bytes.Index(buf[:n], reqIdentify) != -1 {
-	//		// new http request
-	//		log.Printf("client issues another request: \n%s", string(buf[:n]))
-	//	}
-	//	wrServer.Write(buf[:n])
-	//}
-
-	// client has finished all request in this connection
-	close(done)
 }
 
-func discardRemainHeaders(rd *bufio.Reader) {
-	identify := []byte("\r\n")
-	for {
-		s, err := rd.ReadBytes('\n')
+func discardRemainHeaders(rd *bufio.Reader, length int) {
+	n := 0
+	buf := make([]byte, 1024)
+	for n < length {
+		count, err := rd.Read(buf)
 		if err != nil {
 			return
 		}
-		if bytes.Index(s, identify) == 0 {
-			break
-		}
+		n += int(count)
 	}
 }

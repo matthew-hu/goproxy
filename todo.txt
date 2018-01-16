@@ -9,3 +9,19 @@
 
 9. 1.15 第二次 golang
 10. 看 net 等标准库
+[*]11. Handle, 一个 proxy 链接中，访问不同的domain, firefox
+12. FTP over http
+[*]13. 处理 POST PUT 数据的情况
+14. 支持端口映射
+
+
+strings.SplitN 次数要再理解一下
+
+
+bug: chrome baidu 图片 bu work  --> 与 pipeline 有关？ 或者是 handleMoreRequest 结束 close(done) 但是还有 数据没有传送完，而 client 连接被关闭了？
+http://image.baidu.com/search/index?tn=baiduimage&ct=201326592&lm=-1&cl=2&word=tup
+
+post: ? yes, 注意 strcov.ParseInt() 当 以空格开头时候解析错误
+
+
+// 这里有个问题，就是同时多个认证来的时候，OriginalURL 这个 cookie 被更新成最后来的认证请求，用户名密码被post过来后，放问成了非原始的页面

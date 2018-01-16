@@ -17,7 +17,7 @@ var blackList = make(map[*regexp.Regexp]string, 10)
 
 // load black list
 func init() {
-	f, err := os.Open("./blacklist.txt")
+	f, err := os.Open("./config/blacklist.txt")
 	if err != nil {
 		log.Println(err)
 		return
@@ -44,7 +44,7 @@ var blackListTemplate *template.Template
 
 // load blacklist block template
 func init() {
-	f, err := os.Open("./blacklistblock.html")
+	f, err := os.Open("./pages/blacklistblock.html")
 	if err != nil {
 		log.Println(err)
 		return
