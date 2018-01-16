@@ -16,6 +16,9 @@ import (
 var incoming = make(chan struct{}, 1000)
 var leaving = make(chan struct{}, 1000)
 
+// used to send signal to other goroutines to stop there work
+var stop = make(chan struct{})
+
 
 type Proxy struct {
 	port string
@@ -23,6 +26,7 @@ type Proxy struct {
 	reverse string
 	enableBlackList bool
 	enableStatistic bool
+	enableAuth bool
 }
 
 func (p *Proxy) Start() {
@@ -39,15 +43,31 @@ func (p *Proxy) Start() {
 		go p.connectionStatus()
 	}
 
+	if p.enableAuth {
+		go cache()
+		go authDaemon()
+	}
+
 	for {
 		conn, err := listener.Accept()
 		if err != nil {
 			log.Println(err)
 			continue
 		}
+
+		select {
+		case <- stop:
+			break
+		default:
+		}
+
 		incoming <- struct{}{}
 		go p.handleConn(conn)
 	}
+}
+
+func (p *Proxy) Stop() {
+	close(stop)
 }
 
 func (p *Proxy) EnableBlackList() {
@@ -70,7 +90,11 @@ func (p *Proxy) handleConn(conn net.Conn) {
 	p.handleConnPlain(conn)
 }
 
-var proxyString = "HTTP/1.1 200 Connection established\r\nProxy-agent: SimpleProxy\r\n\r\n"
+func (p *Proxy) EnableAuth() {
+	p.enableAuth = true
+}
+
+var proxyString = "HTTP/1.1 200 Connection established\r\nProxy-agent: GoSimpleProxy\r\n\r\n"
 
 func (p *Proxy) handleConnPlain(client net.Conn) {
 	defer func() {
@@ -90,6 +114,14 @@ func (p *Proxy) handleConnPlain(client net.Conn) {
 	if err != nil {
 		log.Println(err)
 		return
+	}
+
+	if p.enableAuth {
+		// bypass access to auth daemon to avoid auth loop
+		if proto == "http" && target != "127.0.0.1:80" && !queryCache(strings.Split(client.RemoteAddr().String(), ":")[0]) {
+			discardRemainHeaders(readerClient)
+			authRedirect(client, proto + "://" + url)
+		}
 	}
 
 	if p.enableBlackList {
@@ -116,7 +148,11 @@ func (p *Proxy) handleConnPlain(client net.Conn) {
 		// send all request lines to server
 		io.WriteString(server, firstLine)
 		for {
-			s, _ := readerClient.ReadString('\n')
+			s, err := readerClient.ReadString('\n')
+			if err != nil {
+				log.Printf("http write string to server: %v", err)
+				break
+			}
 			io.WriteString(server, s)
 			if index := strings.Index(s, "\r\n"); index == 0 {
 				break
@@ -171,11 +207,6 @@ func parseServer(header string) (target, proto, domain, url string, err error) {
 		}
 		domain = strings.Split(target, ":")[0]
 	}
-	return
-}
-
-func createServerConn(target string) (server net.Conn, err error) {
-	server, err = net.Dial("tcp", target)
 	return
 }
 
