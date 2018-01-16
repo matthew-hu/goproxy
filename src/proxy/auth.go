@@ -119,7 +119,7 @@ func authDaemon() {
 					updateCache(strings.Split(r.RemoteAddr, ":")[0], user)
 					log.Printf("authDaemon cache update success: %s: %s", user, pass)
 
-					log.Println(r.Header)
+					//log.Println(r.Header)
 					w.Header().Set("Connection", "close")
 					w.Header().Set("Content-Length", "0")
 					w.Header().Set("Content-Type", "text/html; charset=UTF-8")
@@ -138,7 +138,26 @@ func authDaemon() {
 		//}
 	}
 
+	resource := func(w http.ResponseWriter, r *http.Request) {
+		path := strings.Split(r.URL.Path, "/")
+		f, err := os.Open("./resource/" + path[len(path)-1])
+		if err != nil {
+			log.Printf("authDaemon: failed to load resource: %s", r.URL.Path)
+			return
+		}
+		defer f.Close()
+		if strings.HasSuffix(r.URL.Path, ".css") {
+			w.Header().Set("Content-Type", "text/css")
+		}
+		if strings.HasSuffix(r.URL.Path, ".js") {
+			w.Header().Set("Content-Type", "application/x-javascript")
+		}
+		content, _ := ioutil.ReadAll(f)
+		w.Write(content)
+	}
+
 	http.HandleFunc("/auth", handler)
+	http.HandleFunc("/", resource)
 	log.Fatal(http.ListenAndServeTLS(":443", "./certificate/server-cert.pem", "./certificate/server-KEY.pem", nil))
 
 }
