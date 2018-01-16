@@ -34,7 +34,7 @@ func (p *Proxy) Start() {
 		p.port = "8080"
 	}
 
-	listener, err := net.Listen("tcp", "localhost:" + p.port)
+	listener, err := net.Listen("tcp", ":" + p.port)
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -118,7 +118,7 @@ func (p *Proxy) handleConnPlain(client net.Conn) {
 
 	if p.enableAuth {
 		// bypass access to auth daemon to avoid auth loop
-		if proto == "http" && target != "127.0.0.1:80" && !queryCache(strings.Split(client.RemoteAddr().String(), ":")[0]) {
+		if proto == "http" && !queryCache(strings.Split(client.RemoteAddr().String(), ":")[0]) {
 			discardRemainHeaders(readerClient)
 			authRedirect(client, proto + "://" + url)
 		}
