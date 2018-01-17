@@ -4,40 +4,144 @@ import (
 	`net`
 	"log"
 	"io"
-	"regexp"
+	"bufio"
+	"strings"
+	"io/ioutil"
 )
-
-var regProxy = regexp.MustCompile(`.*:\d+`)
-func (p *Proxy) SetUpstreamProxy(prx string) {
-	if !regProxy.MatchString(prx) {
-		log.Fatalf("invalid upstram proxy %s, should using host:port format", prx)
-	}
-	upstream, err := net.Dial("tcp", prx)
-	if err != nil {
-		log.Fatalf("set upstream proxy mode failed: %v", err)
-	}
-	defer upstream.Close()
-	p.upstream = prx
-}
 
 func (p *Proxy) handleConnUpstreamMode(client net.Conn) {
 	defer func() {
 		client.Close()
 		leaving <- struct{}{}
 	}()
+
+	done := make(chan struct{})
+
 	upConn, err := net.Dial("tcp", p.upstream)
 	if err != nil {
-		log.Println(err)
+		log.Printf("handleConnUpstreamMode: falied to connect to upstream: %s, %v", p.upstream, err)
 		return
 	}
 	defer upConn.Close()
 
-	done := make(chan struct{})
+	bufRD := bufio.NewReader(client)
+	r, err := parseRequestHeader(bufRD)
+	if err != nil && r == nil {
+		log.Printf("parseRequestHeader: met err: %v", err)
+		return
+	}
+
+	if r.proto == "https" {
+		// 443 port authDaemon traffic
+		if r.target == strings.Split(client.LocalAddr().String(), ":")[0]+":443" {
+			authConn, err := net.Dial("tcp", r.target)
+			if err != nil {
+				log.Printf("handleConnUpstreamMode: failed to connect authDaemon: %v", err)
+				return
+			}
+			defer authConn.Close()
+			r.send(ioutil.Discard)
+			io.WriteString(client, proxyString)
+			go func(){
+				io.Copy(authConn, client)
+				done <- struct{}{}
+			}()
+			io.Copy(client, authConn)
+			<- done
+			return
+		}
+		log.Printf("handleConnUpstreamMode: incoming request: %v", *r)
+		r.send(upConn)
+		go func() {
+			io.Copy(upConn, bufRD)
+			done <- struct{}{}
+		}()
+	}
+
 	go func() {
-		io.Copy(upConn, client)
-		close(done)
+		io.Copy(client, upConn)
+		done <- struct{}{}
 	}()
 
-	io.Copy(client, upConn)
+	if r.proto == "http" {
+		if p.enableAuth {
+			if !queryCache(strings.Split(client.RemoteAddr().String(), ":")[0]) {
+				if r.contentLength > 0 {
+					log.Println("content-length", r.contentLength)
+					discardRemainHeaders(r.rd, r.contentLength)
+					r.contentLength = 0
+				}
+				log.Printf("redirect %s to auth", r.url)
+				authRedirect(client, r.proto + "://" + r.url)
+			}
+		}
+
+		if p.enableBlackList {
+			log.Printf("checking blacklist match for first incoming request: %s", r.requestLine)
+			if scanTaskBlackListMatch(r.domain, r.url) {
+				if r.contentLength > 0 {
+					log.Println("content-length", r.contentLength)
+					discardRemainHeaders(r.rd, r.contentLength)
+					r.contentLength = 0
+				}
+				takeActionBlackList(client, r.proto + "://" + r.url)
+				return
+			}
+		}
+
+		r.send(upConn)
+
+		// handle more request
+		for {
+			r, err := parseRequestHeader(bufRD)
+			if err != nil && r == nil {
+				log.Printf("handleConnUpstreamMode: handle more request met err: %v", err)
+				break
+			}
+
+			if p.enableBlackList {
+				log.Printf("handleConnUpstreamMode: checking blacklist match for more request: %s", r.requestLine)
+				if scanTaskBlackListMatch(r.domain, r.url) {
+					if r.contentLength > 0 {
+						log.Println("content-length", r.contentLength)
+						discardRemainHeaders(r.rd, r.contentLength)
+						r.contentLength = 0
+					}
+					takeActionBlackList(client, r.proto + "://" + r.url)
+					break
+				}
+			}
+
+			r.send(upConn)
+		}
+		// all requests have been sent
+		done <- struct{}{}
+	}
+
+	// wait for both client and server finish data transfer
+	<- done
 	<- done
 }
+
+
+//func (p *Proxy) handleConnUpstreamMode(client net.Conn) {
+//	defer func() {
+//		client.Close()
+//		leaving <- struct{}{}
+//	}()
+//	upConn, err := net.Dial("tcp", p.upstream)
+//	if err != nil {
+//		log.Printf("handleConnUpstreamMode: falied to connect to upstream: %s, %v", p.upstream, err)
+//		return
+//	}
+//	defer upConn.Close()
+//
+//	done := make(chan struct{})
+//	go func() {
+//		io.Copy(upConn, client)
+//		close(done)
+//	}()
+//
+//	io.Copy(client, upConn)
+//	<- done
+//}

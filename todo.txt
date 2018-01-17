@@ -11,8 +11,9 @@
 10. 看 net 等标准库
 [*]11. Handle, 一个 proxy 链接中，访问不同的domain, firefox
 12. FTP over http
-[*]13. 处理 POST PUT 数据的情况
+[*]13. 处理 POST PUT 数据的情况, 一上来就 post 或 put 对 auth 的影响（大量数据，要Discard）
 14. 支持端口映射
+15. 支持 HTTPS 解密，JA3
 
 
 strings.SplitN 次数要再理解一下
@@ -25,3 +26,7 @@ post: ? yes, 注意 strcov.ParseInt() 当 以空格开头时候解析错误
 
 
 // 这里有个问题，就是同时多个认证来的时候，OriginalURL 这个 cookie 被更新成最后来的认证请求，用户名密码被post过来后，放问成了非原始的页面
+
+upstream mode 认证的时候 443 https 认证流量直接被丢到了 上有代理，这里要注意处理一下，不能丢过去，有可能上有代理访问不到authDaemon
+
+

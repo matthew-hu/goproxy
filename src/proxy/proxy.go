@@ -8,6 +8,7 @@ import (
 	"io"
 	"time"
 	"io/ioutil"
+	"regexp"
 )
 
 
@@ -87,6 +88,19 @@ func (p *Proxy) EnableAuth() {
 
 func (p *Proxy) EnablePortMap() {
 	p.enablePortMap = true
+}
+
+var regProxy = regexp.MustCompile(`.*:\d+`)
+func (p *Proxy) SetUpstreamProxy(prx string) {
+	if !regProxy.MatchString(prx) {
+		log.Fatalf("invalid upstram proxy %s, should using host:port format", prx)
+	}
+	upstream, err := net.Dial("tcp", prx)
+	if err != nil {
+		log.Fatalf("set upstream proxy mode failed: %v", err)
+	}
+	defer upstream.Close()
+	p.upstream = prx
 }
 
 func (p *Proxy) handleConn(conn net.Conn) {

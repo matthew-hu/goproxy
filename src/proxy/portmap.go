@@ -7,6 +7,7 @@ import (
 	"bufio"
 	"net"
 	"io"
+	"strings"
 )
 
 var portMapping = make(map[string]string, 10)
@@ -22,6 +23,9 @@ func init() {
 	re := regexp.MustCompile(" +")
 	input := bufio.NewScanner(f)
 	for input.Scan() {
+		if strings.HasPrefix(input.Text(), "#") {
+			continue
+		}
 		result := re.Split(input.Text(), 5)
 		if len(result) > 1 {
 			portMapping[result[0]] = result[1]

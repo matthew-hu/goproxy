@@ -1,3 +1,5 @@
-80     10.64.1.186:80
+# port 443 is currently reserved for authDaemon
+80     www.126.com:80
 808    10.202.241.56:3389
 22     10.202.240.36:22
+4443    www.baidu.com:443
