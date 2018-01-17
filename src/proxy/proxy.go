@@ -22,10 +22,10 @@ var stop = make(chan struct{})
 type Proxy struct {
 	port string
 	upstream string
-	reverse string
 	enableBlackList bool
 	enableStatistic bool
 	enableAuth bool
+	enablePortMap bool
 }
 
 func (p *Proxy) Start() {
@@ -45,6 +45,10 @@ func (p *Proxy) Start() {
 	if p.enableAuth {
 		go cache()
 		go authDaemon()
+	}
+
+	if p.enablePortMap {
+		go portMapDaemon()
 	}
 
 	for {
@@ -73,13 +77,19 @@ func (p *Proxy) EnableBlackList() {
 	p.enableBlackList = true
 }
 
-func (p *Proxy) handleConn(conn net.Conn) {
-	if p.reverse != "" {
-		// reverse proxy mode
-		p.handleConnReverseMode(conn)
-		return
-	}
+func (p *Proxy) EnableStatistic() {
+	p.enableStatistic = true
+}
 
+func (p *Proxy) EnableAuth() {
+	p.enableAuth = true
+}
+
+func (p *Proxy) EnablePortMap() {
+	p.enablePortMap = true
+}
+
+func (p *Proxy) handleConn(conn net.Conn) {
 	if p.upstream != "" {
 		// upstream proxy mode
 		p.handleConnUpstreamMode(conn)
@@ -87,10 +97,6 @@ func (p *Proxy) handleConn(conn net.Conn) {
 	}
 
 	p.handleConnPlain(conn)
-}
-
-func (p *Proxy) EnableAuth() {
-	p.enableAuth = true
 }
 
 var proxyString = "HTTP/1.1 200 Connection established\r\nProxy-agent: SimpleGoProxy\r\n\r\n"
@@ -106,11 +112,11 @@ func (p *Proxy) handleConnPlain(client net.Conn) {
 
 	r, err := parseRequestHeader(rd)
 	if err != nil && r == nil {
-		log.Println("handleConnPlain: parse first request fail")
+		log.Printf("handleConnPlain: parse first request fail: %v", err)
 		return
 	}
 
-	log.Println("handle first request: ", *r)
+	log.Println("handle first request: ", r.requestLine)
 
 	target, proto, domain, url := r.target, r.proto, r.domain, r.url
 	log.Println("first coming request:", client.RemoteAddr(), target, proto, url)
@@ -130,7 +136,7 @@ func (p *Proxy) handleConnPlain(client net.Conn) {
 	}
 
 	if p.enableBlackList {
-		log.Printf("checking blacklist match for first incoming request: %s----%d\n", r.requestLine, r.contentLength)
+		log.Printf("checking blacklist match for first incoming request: %s", r.requestLine)
 		if scanTaskBlackListMatch(domain, url) {
 			if r.contentLength > 0 {
 				log.Println("content-length", r.contentLength)

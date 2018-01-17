@@ -77,6 +77,15 @@ func parseRequestHeader(rd *bufio.Reader) (r *request, err error) {
 	var b []byte
 	end := []byte("\r\n")
 	for i := 0; bytes.Index(b, end) != 0; i++ {
+		// protect the scenario that user send so long data that is not http(s) with no \r\n found when rd.ReadBytes('\n')
+		if i == 0 {
+			// at least 'CONNECT x', 9 characters
+			data, _ := rd.Peek(9)
+			if _, ok := methods[strings.Split(string(data), " ")[0]]; !ok {
+				err = fmt.Errorf("peek first request line for 9 bytes to check proto quickly failed: %s", string(data))
+				return
+			}
+		}
 		b, err = rd.ReadBytes('\n')
 		if err != nil {
 			log.Printf("parseRequestHeader i = %d: get error: %v", i, err)

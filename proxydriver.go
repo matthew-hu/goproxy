@@ -24,6 +24,7 @@ func main() {
 	prx.EnableBlackList()
 	//prx.SetUpstreamProxy("10.202.241.54:8080")
 	prx.EnableAuth()
+	prx.EnablePortMap()
 
 	prx.Start()
 	//time.Sleep(100 * time.Second)

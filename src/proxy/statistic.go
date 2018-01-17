@@ -5,9 +5,6 @@ import (
 	"time"
 )
 
-func (p *Proxy) EnableStatistic() {
-	p.enableStatistic = true
-}
 
 func (p *Proxy) connectionStatus() {
 	var total, active, closed int64
