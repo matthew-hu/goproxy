@@ -6,3 +6,5 @@
 pkg/
 pkg/*
 *.prof
+todo.txt
+
