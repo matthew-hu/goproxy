@@ -9,27 +9,24 @@ import (
 	"fmt"
 	"strconv"
 	"io"
+	"net/url"
 )
 
 
 type request struct {
 	requestLine string
-	method string
 	proto string
-	version string
 	target string
 	domain string
-	url string
-	path string
+	urlPath string
 	header map[string][]string
-	contentLength int
+	contentLength int64
+	chunk bool
 	rd *bufio.Reader
 }
 
 func (r *request) send(server io.Writer) {
-	//log.Printf("%s %s %s\r\n", r.method, r.proto + "://" + r.url, r.version)
-	//fmt.Fprintf(server, "%s %s %s\r\n", r.method, r.proto + "://" + r.url, r.version)
-	log.Print(r.requestLine)
+	//log.Print(r.requestLine)
 	fmt.Fprint(server, r.requestLine)
 	for k, v := range r.header {
 		for _, value := range v {
@@ -38,9 +35,10 @@ func (r *request) send(server io.Writer) {
 		}
 	}
 	fmt.Fprint(server, "\r\n")
-	if r.contentLength >0 {
+
+	if r.contentLength > 0 && !r.chunk {
 		log.Println("send: content-length: ", r.contentLength, r.requestLine)
-		n := 0
+		n := int64(0)
 		buf := make([]byte, 1024)
 		for n < r.contentLength {
 			count, err := r.rd.Read(buf)
@@ -54,10 +52,30 @@ func (r *request) send(server io.Writer) {
 			if count > 0 {
 				server.Write(buf[:count])
 			}
-			n += count
+			n += int64(count)
 		}
 		r.contentLength = 0
 	}
+
+	if r.chunk { // The Content-Length header is omitted in this case
+		log.Printf("send: client using transfer-encoding: chunked, handle it specially: %s", r.domain)
+		var b []byte
+		var chunkEnd = []byte("\r\n")
+		var err error
+		for bytes.Index(b, chunkEnd) != 0 {
+			b, err = r.rd.ReadBytes('\n')
+			if err != nil {
+				log.Printf("send: chunked: %v", err)
+				if len(b) > 0 {
+					server.Write(b)
+				}
+				break
+			}
+			server.Write(b)
+		}
+		log.Println("send: chunked data has been sent")
+	}
+
 }
 
 // split client request line, such as: CONNECT www.baidu.com HTTP/1.1
@@ -81,14 +99,14 @@ func parseRequestHeader(rd *bufio.Reader) (r *request, err error) {
 		if i == 0 {
 			// at least 'CONNECT x', 9 characters
 			data, _ := rd.Peek(9)
-			if _, ok := methods[strings.Split(string(data), " ")[0]]; !ok {
+			if _, ok := methods[strings.Split(strings.ToUpper(string(data)), " ")[0]]; !ok {
 				err = fmt.Errorf("peek first request line for 9 bytes to check proto quickly failed: %s", string(data))
 				return
 			}
 		}
 		b, err = rd.ReadBytes('\n')
 		if err != nil {
-			log.Printf("parseRequestHeader i = %d: get error: %v", i, err)
+			log.Printf("parseRequestHeader: request line %d: get error: %v", i+1, err)
 			if len(b) > 0 {
 				log.Printf("parseRequestHeader met error but have read some data: %s", string(b))
 			}
@@ -96,25 +114,39 @@ func parseRequestHeader(rd *bufio.Reader) (r *request, err error) {
 		}
 		// at lease '\r\n'
 		if len(b) < 2 {
-			log.Println("parseRequestHeader: len(b) < 2", b)
+			log.Printf("parseRequestHeader: request line %d, to short: %v, will continue", len(b), b)
 			continue
 		}
 
 		if i == 0 {
-			requestLine, method, proto, version, target, domain, url, path, err1 := parseFirstRequestLine(string(b))
+			requestLine, proto, target, domain, urlPath, err1 := parseFirstRequestLine(string(b))
 			if err1 != nil {
-				log.Println(err1)
+				log.Printf("parseRequestHeader: %v", err1)
 				err = err1
 				break
 			}
 			hd := make(map[string][]string)
-			r = &request{requestLine, method, proto, version, target, domain, url, path, hd, 0, rd}
+			r = &request{
+				requestLine: requestLine,
+				proto: proto,
+				target: target,
+				domain: domain,
+				urlPath: urlPath,
+				header: hd,
+				rd: rd,
+			}
+
 		} else {
 			if k, v := parseRemainHeader(string(b)); k != "" && strings.ToLower(k) != "proxy-connection" {
-				if strings.ToLower(k) == "content-length" {
+				key := strings.ToLower(k)
+				if key == "content-length" {
 					v = strings.TrimPrefix(v, " ")
-					l, _ := strconv.ParseInt(v, 10, 32)
-					r.contentLength = int(l)
+					cl, _ := strconv.ParseInt(v, 10, 64)
+					r.contentLength = cl
+				}
+
+				if key == "transfer-encoding" && strings.Contains(v,"chunked") {
+					r.chunk = true
 				}
 				r.header[k] = append(r.header[k], v)
 			}
@@ -123,36 +155,39 @@ func parseRequestHeader(rd *bufio.Reader) (r *request, err error) {
 	return
 }
 
-func parseFirstRequestLine(line string) (requestLine, method, proto, version, target, domain, url, path string, err error) {
+func parseFirstRequestLine(line string) (requestLine, proto, target, domain, urlPath string, err error) {
 	fields := headerSplit.Split(line, 5)
 	if len(fields) != 3 || !methods[strings.ToUpper(fields[0])] {
 		err = fmt.Errorf("parseFirstRequestLine: not http(s) protocol: %s", line)
-		for _, v := range fields {
-			log.Println(v)
-		}
 		return
 	}
 	requestLine = line
-	version = fields[2][:len(fields[2])-2] // strip ending "\r\n"
-	if method = strings.ToUpper(fields[0]); method == "CONNECT" {
-		target = fields[1]
+	if method := strings.ToUpper(fields[0]); method == "CONNECT" {
+		target = fields[1]  //host:port format
 		proto = "https"
 		domain = strings.Split(target, ":")[0]
-		url = domain
+		urlPath = domain
 	} else {
-		target = strings.Split(strings.Split(fields[1], "://")[1], "/")[0]
-		proto = "http"
-		url = strings.Split(fields[1], "://")[1]
-		parts := strings.SplitN(url, "/", 2)
-		if len(parts) == 1 || parts[1] == "" {
-			path = "/"
-		} else {
-			path = "/" + parts[1]
+		rawurl := fields[1]
+		u, errURL := url.Parse(rawurl)
+		if errURL != nil {
+			err = fmt.Errorf("parseFirstRequestLine: %v", errURL)  // URL parse failed
+			return
 		}
-		if !strings.Contains(target, ":") {
+
+		target = u.Host
+		if u.Port() == "" {
 			target += ":80"
 		}
-		domain = strings.Split(target, ":")[0]
+
+		proto = u.Scheme
+		domain = u.Hostname()
+		if len(strings.SplitN(rawurl, "://", 2)) > 1 {
+			urlPath = strings.SplitN(rawurl, "://", 2)[1]
+		} else if len(strings.SplitN(rawurl, "%3A%2F%2F", 2)) > 1 { // deal with http%3A%2F%2F -> http://
+			urlPath = strings.SplitN(rawurl, "%3A%2F%2F", 2)[1]
+		}
+
 	}
 	return
 }

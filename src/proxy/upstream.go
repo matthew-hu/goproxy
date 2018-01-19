@@ -71,20 +71,20 @@ func (p *Proxy) handleConnUpstreamMode(client net.Conn) {
 					discardRemainHeaders(r.rd, r.contentLength)
 					r.contentLength = 0
 				}
-				log.Printf("redirect %s to auth", r.url)
-				authRedirect(client, r.proto + "://" + r.url)
+				log.Printf("redirect %s to auth", r.urlPath)
+				authRedirect(client, r.proto + "://" + r.urlPath)
 			}
 		}
 
 		if p.enableBlackList {
 			log.Printf("checking blacklist match for first incoming request: %s", r.requestLine)
-			if scanTaskBlackListMatch(r.domain, r.url) {
+			if scanTaskBlackListMatch(r.domain, r.urlPath) {
 				if r.contentLength > 0 {
 					log.Println("content-length", r.contentLength)
 					discardRemainHeaders(r.rd, r.contentLength)
 					r.contentLength = 0
 				}
-				takeActionBlackList(client, r.proto + "://" + r.url)
+				takeActionBlackList(client, r.proto + "://" + r.urlPath)
 				return
 			}
 		}
@@ -101,13 +101,13 @@ func (p *Proxy) handleConnUpstreamMode(client net.Conn) {
 
 			if p.enableBlackList {
 				log.Printf("handleConnUpstreamMode: checking blacklist match for more request: %s", r.requestLine)
-				if scanTaskBlackListMatch(r.domain, r.url) {
+				if scanTaskBlackListMatch(r.domain, r.urlPath) {
 					if r.contentLength > 0 {
 						log.Println("content-length", r.contentLength)
 						discardRemainHeaders(r.rd, r.contentLength)
 						r.contentLength = 0
 					}
-					takeActionBlackList(client, r.proto + "://" + r.url)
+					takeActionBlackList(client, r.proto + "://" + r.urlPath)
 					break
 				}
 			}

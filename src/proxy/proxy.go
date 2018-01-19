@@ -130,17 +130,15 @@ func (p *Proxy) handleConnPlain(client net.Conn) {
 		return
 	}
 
-	log.Println("handle first request: ", r.requestLine)
+	log.Println("handle first coming request: ", r.requestLine)
 
-	target, proto, domain, url := r.target, r.proto, r.domain, r.url
-	log.Println("first coming request:", client.RemoteAddr(), target, proto, url)
-
+	target, proto, domain, url := r.target, r.proto, r.domain, r.urlPath
 
 	if p.enableAuth {
 		// bypass access to auth daemon to avoid auth loop
 		if proto == "http" && !queryCache(strings.Split(client.RemoteAddr().String(), ":")[0]) {
 			if r.contentLength > 0 {
-				log.Println("content-length", r.contentLength)
+				log.Printf("need auth but content-length is %d, discard it first", r.contentLength)
 				discardRemainHeaders(r.rd, r.contentLength)
 				r.contentLength = 0
 			}
@@ -153,7 +151,7 @@ func (p *Proxy) handleConnPlain(client net.Conn) {
 		log.Printf("checking blacklist match for first incoming request: %s", r.requestLine)
 		if scanTaskBlackListMatch(domain, url) {
 			if r.contentLength > 0 {
-				log.Println("content-length", r.contentLength)
+				log.Printf("match blacklist but content-length is %d, discard it", r.contentLength)
 				discardRemainHeaders(r.rd, r.contentLength)
 				r.contentLength = 0
 			}
@@ -164,7 +162,7 @@ func (p *Proxy) handleConnPlain(client net.Conn) {
 
 	server, err := net.Dial("tcp", target)
 	if err != nil {
-		log.Println(err)
+		log.Printf("fail to create connection to remote server: %v", err)
 		return
 	}
 	connections[target] = server
@@ -212,8 +210,8 @@ func (p *Proxy) handleMoreRequest(proto string, bufRdClient *bufio.Reader, curre
 				return
 			}
 
-			log.Println("handle more request: ", currentClient.RemoteAddr(), r.target, r.url)
-			target, domain, url := r.target, r.domain, r.url
+			log.Println("handle more request: ", currentClient.RemoteAddr(), r.target, r.urlPath)
+			target, domain, url := r.target, r.domain, r.urlPath
 
 			if p.enableBlackList {
 				log.Printf("handleMoreRequest: checking blacklist match for: %s\n", url)
@@ -256,14 +254,14 @@ func (p *Proxy) handleMoreRequest(proto string, bufRdClient *bufio.Reader, curre
 
 }
 
-func discardRemainHeaders(rd *bufio.Reader, length int) {
-	n := 0
+func discardRemainHeaders(rd *bufio.Reader, length int64) {
+	n := int64(0)
 	buf := make([]byte, 1024)
 	for n < length {
 		count, err := rd.Read(buf)
 		if err != nil {
 			return
 		}
-		n += int(count)
+		n += int64(count)
 	}
 }

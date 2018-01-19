@@ -23,7 +23,7 @@ func main() {
 	prx.EnableStatistic()
 	prx.EnableBlackList()
 	//prx.SetUpstreamProxy("10.64.50.103:4444")
-	prx.EnableAuth()
+	//prx.EnableAuth()
 	prx.EnablePortMap()
 
 	prx.Start()
